@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SysOpt AI</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #020617; color: #e2e8f0; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        .grid-line { stroke: #1e293b; stroke-width: 0.5; }
+        .graph-container { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- ICONS ---
+        const IconActivity = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>;
+        const IconZap = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>;
+        const IconTrash = () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>;
+        const IconWifi = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>;
+
+        // Helper: Format Bytes to KB/MB
+        const formatBytes = (bytes) => {
+            if (bytes === 0) return '0 B/s';
+            const k = 1024;
+            const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        };
+
+        const LineGraph = ({ data, color, title, subtitle, isDashed }) => {
+            if (!data || data.length < 2) return <div className="h-full flex items-center justify-center text-slate-600 text-xs bg-slate-900 rounded-xl border border-slate-800">Calibrating Model...</div>;
+            const pts = data.map((val, i) => {
+                const x = (i / (data.length - 1)) * 100;
+                const safeVal = Math.max(0, Math.min(100, val));
+                const y = 100 - safeVal; 
+                return `${x},${y}`;
+            }).join(' ');
+            const lastVal = Math.round(data[data.length-1]);
+            return (
+                <div className="bg-slate-900 rounded-xl border border-slate-800 p-5 h-full flex flex-col relative overflow-hidden graph-container transition-all hover:border-slate-700">
+                    <div className="flex justify-between items-start mb-4 z-10">
+                        <div>
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">{title}</h4>
+                            <p className="text-[10px] text-slate-600 font-mono mt-0.5">{subtitle}</p>
+                        </div>
+                        <div className="text-2xl font-bold font-mono" style={{color: color}}>{lastVal}%</div>
+                    </div>
+                    <div className="flex-1 relative w-full">
+                        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full absolute inset-0">
+                            <line x1="0" y1="25" x2="100" y2="25" className="grid-line" strokeDasharray="2" />
+                            <line x1="0" y1="50" x2="100" y2="50" className="grid-line" strokeDasharray="2" />
+                            <line x1="0" y1="75" x2="100" y2="75" className="grid-line" strokeDasharray="2" />
+                            <polygon points={`0,100 ${pts} 100,100`} fill={color} fillOpacity="0.05" />
+                            <polyline fill="none" stroke={color} strokeWidth="2.5" points={pts} strokeDasharray={isDashed ? "4" : "0"} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                        </svg>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [data, setData] = useState(null);
+            const [history, setHistory] = useState([]);
+            const lastSpeakTime = useRef(0); // Prevent voice spamming
+
+            const speakAlert = (text) => {
+                const now = Date.now();
+                // Only speak once every 10 seconds
+                if (now - lastSpeakTime.current > 10000) {
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    window.speechSynthesis.speak(utterance);
+                    lastSpeakTime.current = now;
+                }
+            };
+
+            const fetchData = async () => {
+                try {
+                    const res = await fetch('/analyze');
+                    if (res.ok) {
+                        const realData = await res.json();
+                        setData(realData);
+                        setHistory(prev => [...prev, realData.metrics.cpu].slice(-40));
+
+                        // CHECK FOR VOICE ALERTS
+                        const critical = realData.analysis.optimizations.find(opt => opt.type === "CRITICAL");
+                        if (critical) {
+                            speakAlert(`Attention. ${critical.msg}`);
+                        }
+                    }
+                } catch (err) {}
+            };
+
+            const killProcess = async (pid, name) => {
+                if(!confirm(`Force stop ${name}?`)) return;
+                try {
+                    const res = await fetch('/kill_process', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ pid })
+                    });
+                    const result = await res.json();
+                    if(result.success) {
+                        alert("Process Terminated");
+                        fetchData(); 
+                    } else {
+                        alert("Error: " + result.message);
+                    }
+                } catch(e) { alert("Failed to connect to backend"); }
+            };
+
+            useEffect(() => {
+                fetchData();
+                const interval = setInterval(fetchData, 1000);
+                return () => clearInterval(interval);
+            }, []);
+
+            if (!data) return <div className="h-screen flex items-center justify-center text-slate-500 bg-[#020617] font-mono text-sm">LOADING SYSTEM CORE...</div>;
+
+            return (
+                <div className="max-w-7xl mx-auto p-6 h-screen flex flex-col box-border">
+                    <header className="flex justify-between items-center mb-6 shrink-0">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-blue-600 p-2 rounded-lg text-white"><IconActivity /></div>
+                            <div>
+                                <h1 className="text-2xl font-bold text-white tracking-tight">SysOpt AI Monitor</h1>
+                                <p className="text-xs text-slate-500 font-mono">INTELLIGENT PROCESS ANALYSIS</p>
+                            </div>
+                        </div>
+                        <div className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold font-mono animate-pulse">● LIVE AGENT ACTIVE</div>
+                    </header>
+
+                    <div className="grid grid-cols-2 gap-6 h-64 mb-6 shrink-0">
+                        <LineGraph title="Actual CPU History" subtitle="REAL-TIME SENSOR DATA (-60s)" data={history} color="#3b82f6" isDashed={false} />
+                        <LineGraph title="AI Probabilistic Forecast" subtitle="GENERATIVE PREDICTION (+60s)" data={data.analysis.forecast_trend} color="#a855f7" isDashed={true} />
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
+                        {/* LEFT COLUMN: METRICS + NETWORK */}
+                        <div className="space-y-4">
+                            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800">
+                                <div className="text-slate-400 text-xs font-bold uppercase mb-1">Memory Load</div>
+                                <div className="text-2xl font-bold text-white mb-2">{data.metrics.memory}%</div>
+                                <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden">
+                                    <div className="bg-purple-500 h-full transition-all duration-500" style={{width: data.metrics.memory + '%'}}></div>
+                                </div>
+                            </div>
+                            
+                            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800">
+                                <div className="flex items-center justify-between mb-3">
+                                    <div className="text-slate-400 text-xs font-bold uppercase">Network Traffic</div>
+                                    <IconWifi />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-sm">
+                                    <div className="bg-slate-950 p-2 rounded border border-slate-800">
+                                        <div className="text-[10px] text-slate-500">DOWNLOAD</div>
+                                        <div className="font-mono text-emerald-400">{formatBytes(data.metrics.net_recv)}</div>
+                                    </div>
+                                    <div className="bg-slate-950 p-2 rounded border border-slate-800">
+                                        <div className="text-[10px] text-slate-500">UPLOAD</div>
+                                        <div className="font-mono text-blue-400">{formatBytes(data.metrics.net_sent)}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* CENTER COLUMN: AI OPTIMIZER */}
+                        <div className="bg-slate-900 rounded-xl border border-slate-800 p-5 flex flex-col">
+                            <h3 className="text-indigo-400 font-bold flex items-center gap-2 mb-4"><IconZap /> Optimization Engine</h3>
+                            <div className="flex-1 space-y-4">
+                                <div className="p-4 bg-slate-950/50 rounded-lg border border-slate-800 font-mono text-xs text-indigo-300 leading-relaxed">{data.analysis.forecast}</div>
+                                <div className="space-y-2">
+                                    {data.analysis.optimizations.map((opt, i) => (
+                                        <div key={i} className={`flex gap-3 text-sm items-start p-2 rounded ${opt.type === 'CRITICAL' ? 'bg-red-500/10 text-red-200 border border-red-500/20' : 'text-slate-300'}`}>
+                                            <span className="mt-1">•</span>
+                                            <span>{opt.msg}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* RIGHT COLUMN: PROCESS LIST */}
+                        <div className="bg-slate-900 rounded-xl border border-slate-800 p-5 flex flex-col">
+                            <h3 className="text-slate-400 font-bold uppercase text-xs mb-4">Bottleneck Detection</h3>
+                            <div className="grid grid-cols-4 text-[10px] text-slate-500 uppercase font-bold mb-2 px-2">
+                                <div className="col-span-2">Name</div>
+                                <div className="text-right">CPU</div>
+                                <div className="text-right">MEM</div>
+                            </div>
+                            <div className="space-y-1 overflow-y-auto pr-2 custom-scrollbar flex-1">
+                                {data.analysis.bottlenecks.map((p, i) => (
+                                    <div key={i} className="grid grid-cols-4 items-center text-sm p-2 hover:bg-slate-800 rounded-lg transition-colors border border-transparent hover:border-slate-700 group">
+                                        <div className="col-span-2 text-white font-medium truncate pr-2">{p.name}</div>
+                                        <div className={`text-right font-mono font-bold ${p.cpu_percent > 20 ? 'text-red-400' : 'text-blue-400'}`}>{p.cpu_percent.toFixed(1)}%</div>
+                                        <div className="flex justify-end items-center gap-3">
+                                            <div className="text-right font-mono text-purple-400">{p.memory_percent.toFixed(1)}%</div>
+                                            <button 
+                                                onClick={() => killProcess(p.pid, p.name)}
+                                                className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all p-1"
+                                                title="End Task"
+                                            >
+                                                <IconTrash />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
