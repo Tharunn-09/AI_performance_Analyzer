@@ -2,7 +2,8 @@ SysOpt AI Monitor 🧠⚡
 SysOpt AI is a hybrid desktop application that combines real-time system monitoring with Machine Learning. Unlike standard task managers, SysOpt uses predictive algorithms to forecast CPU usage trends and detect anomalies in system behavior, providing actionable insights and voice-actuated alerts.
 
 📸 Project Screenshot
-<img width="1689" height="1086" alt="image" src="https://github.com/user-attachments/assets/535e5831-9325-4ca4-938a-e22fc59b568b" />
+<img width="1689" height="1086" alt="Screenshot 2025-11-30 224050" src="https://github.com/user-attachments/assets/34d5ef61-cfdf-4fe5-a01e-aab969b24491" />
+
 
 🚀 Key Features
 Real-Time Monitoring: Live tracking of CPU, Memory, Disk usage, and Network upload/download speeds.
